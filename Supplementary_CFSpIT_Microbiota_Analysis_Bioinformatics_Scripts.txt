@@ -1,0 +1,182 @@
+###################################################
+#CFSpIT MICROBIOTA ANALYSIS BIOINFORMATICS SCRIPTS#
+###################################################
+
+#Author: Rebecca Weiser
+#Accompanies: Weiser et al. (2021)
+
+#All analysis was performed using a virtual machine hosted by the Cloud Infrastructure for Microbial Bioinformatics (CLIMB) consortium
+
+#########################################
+#Preparing sequences for Mothur analysis#
+#########################################
+
+#Upload demultiplexed forward and reverse sequences (.fastq.gz) from 16S V4 region sequencing Illumina MiSeq 250 paired-end run to CLIMB
+
+#Make directory to upload files into and navigate to the new directory
+mkdir CFSPiT		
+cd CFSpiT
+#List all files
+ls
+#Count number of .fastq.gz files 			
+ls -lR *.fastq.gz | wc -l			
+#Unzip all .gz files
+gunzip *.gz	
+#List files, should see that they are now .fastq rather than .fastq.gz					# 
+ls								
+
+#SEQUENCE QC USING FASTQC AND MULTIQC
+
+#Make a new directory for the fastqc outputs
+mkdir fastqc_output		
+#Run fastqc on all .fastq files (*.fastqc) and output into the directory (-o) fastqc_output			
+fastqc *.fastq -o fastqc_output		
+#Run multiqc to consolidate fastqc results into single report, view report to check sequence quality
+multiqc --interactive .				
+
+#TRIM SEQUENCES WITH TRIM GALORE
+
+#For one pair of samples run trim galore on paired samples R1 and R2 
+trim_galore -paired R1.fastq R2.fastq 	
+
+#Run trim galore on multiple pairs of samples using parallel (O. Tange (2011): GNU Parallel - The Command-Line Power Tool,;login: The USENIX Magazine, February 2011:42-47)
+
+#Make input file for parallel (column {1} R1 file names, column {2} R2 file names)
+ls *R1_001.fastq > R1_file_names.txt
+ls *R2_001.fastq > R2_file_names.txt
+paste R1_file_names.txt R2_file_names.txt > trimgalorepairs.txt	
+
+#Make output directory
+mkdir trim_galore_output
+#Run trim galore with options for illumina paired-end sequencing and run fastqc on trimmed files
+parallel -j 2 --colsep '\t' trim_galore --illumina --paired --fastqc -o trim_galore_output/ {1} {2} :::: trimgalorepairs.txt
+
+#Navigate into trim_galore_output and run multiqc to compare untrimmed and trimmed sequences, view report to check sequence quality
+cd trim_galore_output
+multiqc --interactive .	
+
+
+#RENAME .FASTQ FILES TO SAMPLE NAMES
+
+#Create a .txt file in windows with column 1 as the old file name and column 2 as the new file name, e.g. rename_files.txt:
+
+A1_S1_L001_R1_001_val_1.fq	1_R1.fastq
+A1_S1_L001_R2_001_val_2.fq	1_R2.fastq
+A2_S2_L001_R1_001_val_1.fq	2_R1.fastq
+A2_S2_L001_R2_001_val_2.fq	2_R2.fastq
+A3_S3_L001_R1_001_val_1.fq	3_R1.fastq
+A3_S3_L001_R2_001_val_2.fq	3_R2.fastq
+A4_S4_L001_R1_001_val_1.fq	4_R1.fastq
+A4_S4_L001_R2_001_val_2.fq	4_R2.fastq
+A5_S5_L001_R1_001_val_1.fq	5_R1.fastq
+A5_S5_L001_R2_001_val_2.fq	5_R2.fastq
+A6_S6_L001_R1_001_val_1.fq	6_R1.fastq
+
+#Upload this file to CLIMB and remove the DOS return carriage
+cat -v rename_files.txt 						#check for DOS return carriage ^M
+sed -i -e 's/\r//g' rename_files.txt			#remove DOS return carriage
+cat -v rename_files.txt 						#check DOS return carriage has been removed
+ls
+
+#Mass rename the files based on the text file, column {1} file names will be replaced by column {2} file names
+parallel -j 2 --colsep '\t' 'mv {1} {2}' :::: rename_files.txt 			
+ls		
+
+#CREATE A FILE FOR MOTHUR TO PAIR R1 AND R2 FILES FOR EACH SAMPLE
+#The file has column {1} sample name, column {2} R1.fastq, and column {3} R2.fastq
+
+#Make the first column
+ls *_R1.fastq > sample_names.txt
+sed -e 's/_R1.fastq//' sample_names.txt > mothur_sample_names_edited.txt
+
+#Make the second (R1) and third (R2) columns
+ls *_R1.fastq > mothur_R1_file_names.txt
+ls *_R2.fastq > mothur_R2_file_names.txt
+
+#Join the files together in the right order
+paste mothur_sample_names_edited.txt mothur_R1_file_names.txt mothur_R2_file_names.txt > CF_names.txt
+
+#The resulting file will have the following layout:
+#1	1_R1.fastq	1_R2.fastq
+#2	2_R1.fastq	2_R2.fastq
+#3	3_R1.fastq	3_R2.fastq
+#4	4_R1.fastq	4_R2.fastq
+#5	5_R1.fastq	5_R2.fastq
+#6	6_R1.fastq	6_R2.fastq
+#7	7_R1.fastq	7_R2.fastq
+#8	8_R1.fastq	8_R2.fastq
+#9	9_R1.fastq	9_R2.fastq
+#10	10_R1.fastq	10_R2.fastq
+
+#You can check the layout with nano
+nano CF_names.txt
+
+#DOWNLOAD THE OTHER FILES NEEDED FOR MOTHUR
+
+#Silva database for 16S rRNA alignments, download the latest release, http://www.mothur.org/wiki/Silva_reference_files (Silva.nr_v132.tgz)
+#Move into the directory that you are using and unzip
+tar -xvzf Silva.nr.v132.tgz
+#The files you need are silva.nr_v132.align (for the alignment) and silva.nr_v132.tax
+
+#vsearch for chimera removal by mothur
+wget https://github.com/torognes/vsearch/releases/download/v2.7.1/vsearch-2.7.1-linux-x86_64.tar.gz
+tar xzf vsearch-2.7.1-linux-x86_64.tar.gz		
+#navigate to bin
+cd vsearch-2.7.1-linux-x86_64/bin	
+#list files to check that the vsearch executable is there
+ls											
+#copy executable to path so that mothur can find it
+cp vsearch /usr/local/bin						
+
+########
+#MOTHUR#
+########
+
+#https://mothur.org/wiki/miseq_sop/
+#Some long-running processes may need to be performed using tmux (https://github.com/tmux/tmux/wiki) to ensure that processes are not aborted if the connection is lost
+
+#Launch mothur
+mothur
+
+#First step is to combine forward and reverse reads for each sample using the information in the CF_names.txt file
+#All renamed .fastq files need to be in the same directory as .txt file to pair R1 and R2 reads
+mothur > make.contigs(file=CF_names.txt)			
+
+#Summarise
+mothur > summary.seqs (fasta=example.trim.contigs.fasta, processors=8)
+
+#Look at the summary and decide the cut off points for the sequences you want to keep
+#Remove any sequences that are shorter or longer than you are expecting, but you don't want to lose too many sequence reads 
+#In my case the sequenced region is about 250, so I chose 252-253 as this captured the majority of sequences
+
+mothur > screen.seqs(fasta=example.trim.contigs.fasta, group=example.contigs.groups, summary=example.trim.contigs.summary, maxn=0, maxambig=0, maxhomop=7, minlength=252, maxlength=253)
+mothur > summary.seqs (fasta=example.trim.contigs.good.fasta)										#Re-summarise, check that the total number of sequences hasn't drastically decreased
+mothur > get.current ()																				#Use this at any point to see current files and settings e.g. number of processors being used
+mothur > unique.seqs(fasta=example.trim.contigs.good.fasta) 										#Remove duplicate sequences
+mothur > count.seqs(name=example.trim.contigs.good.names, group=example.contigs.good.groups)		#Generate table of groups (samples) vs. unique sequences
+mothur > summary.seqs (count=example.trim.contigs.good.count_table)									#Re-summarise and look at the number of unique sequences compared to total sequences
+mothur > count.groups(count=example.trim.contigs.good.count_table)									#Check how many reads are in each group (sample)
+
+mothur > align.seqs(fasta=example.trim.contigs.good.unique.fasta, reference=silva.nr_v132.align)										#Align to a reference database
+mothur > summary.seqs(fasta=example.trim.contigs.good.unique.align, count=example.trim.contigs.good.count_table, processors=8) 			#Summarise
+
+#screen.seqs command, set start and end values to the values of the 25% and 75% pecentile in the summary.seqs output
+
+mothur > screen.seqs(fasta=example.trim.contigs.good.unique.align, count=example.trim.contigs.good.count_table, summary=example.trim.contigs.good.unique.summary, start=13854, end=23444, maxhomop=7)
+mothur > summary.seqs(fasta=current, count=current)
+mothur > filter.seqs(fasta=example.trim.contigs.good.unique.good.align, vertical=T, trump=.)
+mothur > unique.seqs(fasta=example.trim.contigs.good.unique.good.filter.fasta, count=example.trim.contigs.good.good.count_table)
+mothur > pre.cluster(fasta=example.trim.contigs.good.unique.good.filter.unique.fasta, count=example.trim.contigs.good.unique.good.filter.count_table, diffs=2, processors=8)
+mothur > chimera.vsearch(fasta=example.trim.contigs.good.unique.good.filter.unique.precluster.fasta, count=example.trim.contigs.good.unique.good.filter.unique.precluster.count_table, dereplicate=t)
+mothur > remove.seqs(fasta=example.trim.contigs.good.unique.good.filter.unique.precluster.fasta, accnos=example.trim.contigs.good.unique.good.filter.unique.precluster.denovo.vsearch.accnos)
+mothur > summary.seqs(fasta=current, count=current)
+mothur > classify.seqs(fasta=example.trim.contigs.good.unique.good.filter.unique.precluster.pick.fasta, count=example.trim.contigs.good.unique.good.filter.unique.precluster.denovo.vsearch.pick.count_table, reference=silva.nr_v132.align, taxonomy=silva.nr_v132.tax, cutoff=80, processors=8)
+mothur > remove.lineage(fasta=example.trim.contigs.good.unique.good.filter.unique.precluster.pick.fasta, count=example.trim.contigs.good.unique.good.filter.unique.precluster.denovo.vsearch.pick.count_table, taxonomy=CF_names.trim.contigs.good.unique.good.filter.unique.precluster.pick.nr_v132.wang.taxonomy, taxon=Chloroplast-Mitochondria-unknown-Archaea-Eukaryota)
+mothur > cluster.split(fasta=example.trim.contigs.good.unique.good.filter.unique.precluster.pick.pick.pick.fasta, count=example.trim.contigs.good.unique.good.filter.unique.precluster.denovo.vsearch.pick.pick.pick.count_table, taxonomy=example.trim.contigs.good.unique.good.filter.unique.precluster.pick.nr_v132.wang.pick.taxonomy, splitmethod=classify, taxlevel=4, cutoff=0.03)
+mothur > make.shared(list=example.trim.contigs.good.unique.good.filter.unique.precluster.pick.pick.opti_mcc.unique_list.list, count=example.trim.contigs.good.unique.good.filter.unique.precluster.denovo.vsearch.pick.pick.count_table, label=0.03)
+mothur > classify.otu(list=CF_names.trim.contigs.good.unique.good.filter.unique.precluster.pick.pick.opti_mcc.unique_list.list, count=CF_names.trim.contigs.good.unique.good.filter.unique.precluster.denovo.vsearch.pick.pick.count_table, taxonomy=CF_names.trim.contigs.good.unique.good.filter.unique.precluster.pick.nr_v132.wang.pick.taxonomy, label=0.03)
+
+#Download and use the following files to Windows for sequence decontamination (Microsoft Excel) and sequence processing and subsampling (R statistical software phyloseq package)
+#See other Supplementary materials for further details
+#Final shared (OTU table) = CFSPiT.trim.contigs.good.unique.good.filter.unique.precluster.pick.pick.opti_mcc.unique_list.shared
+#Final consensus taxonomy = CFSPiT.trim.contigs.good.unique.good.filter.unique.precluster.pick.pick.opti_mcc.unique_list.0.03.cons.taxonomy
